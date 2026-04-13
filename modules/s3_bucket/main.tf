@@ -9,7 +9,7 @@ resource "aws_s3_bucket" "s3_bucket" {
   #checkov:skip=CKV2_AWS_62:We don't have any use case for bucket notifications
   bucket           = local.bucket_name
   bucket_prefix    = var.bucket_prefix
-  bucket_namespace = var.bucket_namespace
+  # bucket_namespace = var.bucket_namespace
   force_destroy       = var.force_destroy
   object_lock_enabled = var.retention_days != null && var.retention_days > 0 ? true : false
   tags = var.tags
