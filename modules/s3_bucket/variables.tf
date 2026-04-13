@@ -620,14 +620,17 @@ variable "bucket_namespace" {
   }
 }
 
-variable "replication_destination_bucket_arn" {
-  type        = string
-  description = "ARN of the destination bucket for replication. If set, replication config and IAM role are created automatically."
-  default     = null
-}
-
-variable "replication_destination_account_id" {
-  type        = string
-  description = "Destination AWS account ID for cross-account replication. Required when using access_control_translation."
-  default     = null
+variable "replication_rules" {
+  description = "List of cross-account replication rules"
+  type = list(object({
+    id             = string
+    status         = optional(string, "Enabled")
+    priority       = number
+    prefix         = optional(string, "")
+    storage_class  = optional(string, "STANDARD")
+    dest_bucket    = string        # destination bucket ARN
+    dest_account   = string        # destination AWS account ID
+    delete_markers = optional(string, "Enabled")
+  }))
+  default = []  # empty = no replication configured
 }

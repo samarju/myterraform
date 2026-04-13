@@ -6,10 +6,7 @@ locals {
 }
 
 resource "aws_s3_bucket" "s3_bucket" {
-  #checkov:skip=CKV_AWS_144:We don't want cross region replication currently
   #checkov:skip=CKV2_AWS_62:We don't have any use case for bucket notifications
-  # bucket        = var.bucket_namespace == "account-regional" ? null : var.bucket
-  # bucket_prefix = var.bucket_namespace == "account-regional" ? var.bucket : null
   bucket           = local.bucket_name
   bucket_prefix    = var.bucket_prefix
   bucket_namespace = var.bucket_namespace
@@ -256,12 +253,12 @@ resource "aws_s3_bucket_public_access_block" "s3_bucket_public_access_block" {
 }
 
 resource "random_id" "replication_role_suffix" {
-  count       = var.replication_destination_bucket_arn != null ? 1 : 0
+  count       = length(var.replication_rules) > 0 ? 1 : 0
   byte_length = 3  # produces 5-6 hex chars
 }
 
 module "replication_iam_role" {
-  count  = var.replication_destination_bucket_arn != null ? 1 : 0
+  count  = length(var.replication_rules) > 0 ? 1 : 0
   source = "../iam_role"
 
   name = "s3-replication-role-${random_id.replication_role_suffix[0].hex}"
@@ -276,45 +273,56 @@ module "replication_iam_role" {
     name = "s3-replication-policy"
     json = jsonencode({
       Version = "2012-10-17"
-      Statement = [
-        {
-          Effect   = "Allow"
-          Action   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]
-          Resource = aws_s3_bucket.s3_bucket.arn
-        },
-        {
-          Effect   = "Allow"
-          Action   = ["s3:GetObjectVersionForReplication", "s3:GetObjectVersionAcl", "s3:GetObjectVersionTagging"]
-          Resource = "${aws_s3_bucket.s3_bucket.arn}/*"
-        },
-        {
-          Effect   = "Allow"
-          Action   = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"]
-          Resource = "${var.replication_destination_bucket_arn}/*"
-        }
-      ]
+      Statement = concat(
+        [
+          {
+            Effect   = "Allow"
+            Action   = ["s3:GetReplicationConfiguration", "s3:ListBucket"]
+            Resource = aws_s3_bucket.s3_bucket.arn
+          },
+          {
+            Effect   = "Allow"
+            Action   = ["s3:GetObjectVersionForReplication", "s3:GetObjectVersionAcl", "s3:GetObjectVersionTagging"]
+            Resource = "${aws_s3_bucket.s3_bucket.arn}/*"
+          }
+        ],
+        [
+          for rule in var.replication_rules : {
+            Effect   = "Allow"
+            Action   = ["s3:ReplicateObject", "s3:ReplicateDelete", "s3:ReplicateTags"]
+            Resource = "${rule.dest_bucket}/*"
+          }
+        ]
+      )
     })
   }
 }
 
 resource "aws_s3_bucket_replication_configuration" "replication" {
-  count  = var.replication_destination_bucket_arn != null ? 1 : 0
+  count = length(var.replication_rules) > 0 ? 1 : 0
   bucket = aws_s3_bucket.s3_bucket.id
   role   = module.replication_iam_role[0].arn
-
-  rule {
-    id     = "replicate-all"
-    status = "Enabled"
-    destination {
-      bucket        = var.replication_destination_bucket_arn
-      storage_class = "STANDARD"
-      account    = var.replication_destination_account_id
-      access_control_translation {
+  depends_on = [aws_s3_bucket_versioning.s3_bucket_versioning]
+  dynamic "rule" {
+    for_each = var.replication_rules
+    content {
+      id       = rule.value.id
+      status   = rule.value.status
+      priority = rule.value.priority
+      filter {
+        prefix = rule.value.prefix
+      }
+      destination {
+        bucket        = rule.value.dest_bucket
+        storage_class = rule.value.storage_class
+        account       = rule.value.dest_account
+        access_control_translation {
           owner = "Destination"
         }
+      }
+      delete_marker_replication {
+        status = rule.value.delete_markers
+      }
     }
   }
-
-  depends_on = [aws_s3_bucket_versioning.s3_bucket_versioning]
 }
-
